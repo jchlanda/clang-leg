@@ -5555,30 +5555,30 @@ public:
                         "-f64:32-a:0:32-n32";
   }
   void getTargetDefines(const LangOptions &Opts,
-                        MacroBuilder &Builder) const override { }
+                        MacroBuilder &Builder) const LLVM_OVERRIDE { }
   void getTargetBuiltins(const Builtin::Info *&Records,
-                         unsigned &NumRecords) const override { }
-  BuiltinVaListKind getBuiltinVaListKind() const override {
+                         unsigned &NumRecords) const LLVM_OVERRIDE { }
+  BuiltinVaListKind getBuiltinVaListKind() const LLVM_OVERRIDE {
     return TargetInfo::VoidPtrBuiltinVaList;
   }
-  const char *getClobbers() const override {
+  const char *getClobbers() const LLVM_OVERRIDE {
     return "";
   }
   void getGCCRegNames(const char * const *&Names,
-                      unsigned &NumNames) const override {
+                      unsigned &NumNames) const LLVM_OVERRIDE {
     Names = NULL;
     NumNames = 0;
   }
   void getGCCRegAliases(const GCCRegAlias *&Aliases,
-                        unsigned &NumAliases) const override {
+                        unsigned &NumAliases) const LLVM_OVERRIDE {
     Aliases = NULL;
     NumAliases = 0;
   }
   bool validateAsmConstraint(const char *&Name,
-                             TargetInfo::ConstraintInfo &Info) const override {
+                             TargetInfo::ConstraintInfo &Info) const LLVM_OVERRIDE {
     return false;
   }
-  int getEHDataRegisterNumber(unsigned RegNo) const override {
+  int getEHDataRegisterNumber(unsigned RegNo) const LLVM_OVERRIDE {
     // R0=ExceptionPointerRegister R1=ExceptionSelectorRegister
     return -1;
   }
