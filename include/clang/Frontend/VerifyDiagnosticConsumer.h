@@ -180,8 +180,8 @@ public:
     }
 
   private:
-    Directive(const Directive &) LLVM_DELETED_FUNCTION;
-    void operator=(const Directive &) LLVM_DELETED_FUNCTION;
+    Directive(const Directive &) = delete;
+    void operator=(const Directive &) = delete;
   };
 
   typedef std::vector<std::unique_ptr<Directive>> DirectiveList;
@@ -212,7 +212,7 @@ public:
 private:
   DiagnosticsEngine &Diags;
   DiagnosticConsumer *PrimaryClient;
-  bool OwnsPrimaryClient;
+  std::unique_ptr<DiagnosticConsumer> PrimaryClientOwner;
   std::unique_ptr<TextDiagnosticBuffer> Buffer;
   const Preprocessor *CurrentPreprocessor;
   const LangOptions *LangOpts;
@@ -246,7 +246,7 @@ public:
   /// the currently-attached diagnostic client when a diagnostic does not match 
   /// what is expected (as indicated in the source file).
   VerifyDiagnosticConsumer(DiagnosticsEngine &Diags);
-  ~VerifyDiagnosticConsumer();
+  ~VerifyDiagnosticConsumer() override;
 
   void BeginSourceFile(const LangOptions &LangOpts,
                        const Preprocessor *PP) override;

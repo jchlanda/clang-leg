@@ -425,7 +425,7 @@ namespace dr39 { // dr39: no
       using V::z;
       float &z(float);
     };
-    struct C : A, B, virtual V {} c;
+    struct C : A, B, virtual V {} c; // expected-warning {{direct base 'dr39::example2::A' is inaccessible due to ambiguity:\n    struct dr39::example2::C -> struct dr39::example2::A\n    struct dr39::example2::C -> struct dr39::example2::B -> struct dr39::example2::A}}
     int &x = c.x(0); // expected-error {{found in multiple base classes}}
     // FIXME: This is valid, because we find the same static data member either way.
     int &y = c.y(0); // expected-error {{found in multiple base classes}}
@@ -521,17 +521,28 @@ namespace dr48 { // dr48: yes
 }
 
 namespace dr49 { // dr49: yes
-  template<int*> struct A {}; // expected-note {{here}}
+  template<int*> struct A {}; // expected-note 0-2{{here}}
   int k;
 #if __has_feature(cxx_constexpr)
   constexpr
 #endif
-  int *const p = &k;
+  int *const p = &k; // expected-note 0-2{{here}}
   A<&k> a;
-  A<p> b; // expected-error {{must have its address taken}}
+  A<p> b;
+#if __cplusplus <= 201402L
+  // expected-error@-2 {{must have its address taken}}
+#endif
 #if __cplusplus < 201103L
-  // expected-error@-2 {{internal linkage}}
-  // expected-note@-5 {{here}}
+  // expected-error@-5 {{internal linkage}}
+#endif
+  int *q = &k;
+  A<q> c;
+#if __cplusplus < 201103L
+  // expected-error@-2 {{must have its address taken}}
+#else
+  // expected-error@-4 {{constant expression}}
+  // expected-note@-5 {{read of non-constexpr}}
+  // expected-note@-7 {{declared here}}
 #endif
 }
 
@@ -823,7 +834,7 @@ namespace dr70 { // dr70: yes
 namespace dr73 { // dr73: no
   // The resolution to dr73 is unworkable. Consider:
   int a, b;
-  static_assert(&a + 1 != &b, "");
+  static_assert(&a + 1 != &b, ""); // expected-error {{not an integral constant expression}}
 }
 #endif
 
@@ -853,7 +864,7 @@ namespace dr77 { // dr77: yes
 namespace dr78 { // dr78: sup ????
   // Under DR78, this is valid, because 'k' has static storage duration, so is
   // zero-initialized.
-  const int k; // expected-error {{default initialization of an object of const}} expected-note{{add an explicit initializer to initialize 'k'}}
+  const int k; // expected-error {{default initialization of an object of const}}
 }
 
 // dr79: na
@@ -983,7 +994,7 @@ namespace dr91 { // dr91: yes
   int k = f(U());
 }
 
-namespace dr92 { // dr92: yes
+namespace dr92 { // FIXME: Issue is still open.
   void f() throw(int, float);
   void (*p)() throw(int) = &f; // expected-error {{target exception specification is not superset of source}}
   void (*q)() throw(int);
@@ -995,6 +1006,10 @@ namespace dr92 { // dr92: yes
     g(q); // expected-error {{is not superset}}
   }
 
+  // Prior to C++17, this is OK because the exception specification is not
+  // considered in this context. In C++17, we *do* perform an implicit
+  // conversion (which performs initialization), but we convert to the type of
+  // the template parameter, which does not include the exception specification.
   template<void() throw()> struct X {};
   X<&f> xp; // ok
 }

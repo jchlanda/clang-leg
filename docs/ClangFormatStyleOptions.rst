@@ -150,9 +150,34 @@ the configuration (without a prefix: ``Auto``).
 **AccessModifierOffset** (``int``)
   The extra indent or outdent of access modifiers, e.g. ``public:``.
 
+**AlignAfterOpenBracket** (``bool``)
+  If ``true``, horizontally aligns arguments after an open bracket.
+
+  This applies to round brackets (parentheses), angle brackets and square
+  brackets. This will result in formattings like
+  \code
+  someLongFunction(argument1,
+  argument2);
+  \endcode
+
+**AlignConsecutiveAssignments** (``bool``)
+  If ``true``, aligns consecutive assignments.
+
+  This will align the assignment operators of consecutive lines. This
+  will result in formattings like
+  \code
+  int aaaa = 12;
+  int b    = 23;
+  int ccc  = 23;
+  \endcode
+
 **AlignEscapedNewlinesLeft** (``bool``)
   If ``true``, aligns escaped newlines as far left as possible.
   Otherwise puts them into the right-most column.
+
+**AlignOperands** (``bool``)
+  If ``true``, horizontally align operands of binary and ternary
+  expressions.
 
 **AlignTrailingComments** (``bool``)
   If ``true``, aligns trailing comments.
@@ -177,8 +202,10 @@ the configuration (without a prefix: ``Auto``).
 
   * ``SFS_None`` (in configuration: ``None``)
     Never merge functions into a single line.
+  * ``SFS_Empty`` (in configuration: ``Empty``)
+    Only merge empty functions.
   * ``SFS_Inline`` (in configuration: ``Inline``)
-    Only merge functions defined inside a class.
+    Only merge functions defined inside a class. Implies "empty".
   * ``SFS_All`` (in configuration: ``All``)
     Merge all functions fitting on a single line.
 
@@ -191,15 +218,27 @@ the configuration (without a prefix: ``Auto``).
   If ``true``, ``while (true) continue;`` can be put on a
   single line.
 
-**AlwaysBreakAfterDefinitionReturnType** (``bool``)
-  If ``true``, always break after function definition return types.
+**AlwaysBreakAfterDefinitionReturnType** (``DefinitionReturnTypeBreakingStyle``)
+  The function definition return type breaking style to use.
 
-  More truthfully called 'break before the identifier following the type
-  in a function definition'. PenaltyReturnTypeOnItsOwnLine becomes
-  irrelevant.
+  Possible values:
+
+  * ``DRTBS_None`` (in configuration: ``None``)
+    Break after return type automatically.
+    ``PenaltyReturnTypeOnItsOwnLine`` is taken into account.
+  * ``DRTBS_All`` (in configuration: ``All``)
+    Always break after the return type.
+  * ``DRTBS_TopLevel`` (in configuration: ``TopLevel``)
+    Always break after the return types of top level functions.
+
 
 **AlwaysBreakBeforeMultilineStrings** (``bool``)
   If ``true``, always break before multiline string literals.
+
+  This flag is mean to make cases where there are multiple multiline strings
+  in a file look more consistent. Thus, it will only take effect if wrapping
+  the string at that point leads to it being indented
+  ``ContinuationIndentWidth`` spaces from the start of the line.
 
 **AlwaysBreakTemplateDeclarations** (``bool``)
   If ``true``, always break after the ``template<...>`` of a
@@ -236,6 +275,9 @@ the configuration (without a prefix: ``Auto``).
   * ``BS_Linux`` (in configuration: ``Linux``)
     Like ``Attach``, but break before braces on function, namespace and
     class definitions.
+  * ``BS_Mozilla`` (in configuration: ``Mozilla``)
+    Like ``Attach``, but break before braces on enum, function, and record
+    definitions.
   * ``BS_Stroustrup`` (in configuration: ``Stroustrup``)
     Like ``Attach``, but break before function definitions, and 'else'.
   * ``BS_Allman`` (in configuration: ``Allman``)
@@ -295,7 +337,7 @@ the configuration (without a prefix: ``Auto``).
   alignment of & and \*. ``PointerAlignment`` is then used only as fallback.
 
 **DisableFormat** (``bool``)
-  Disables formatting at all.
+  Disables formatting completely.
 
 **ExperimentalAutoDetectBinPacking** (``bool``)
   If ``true``, clang-format detects whether function calls and
@@ -355,6 +397,12 @@ the configuration (without a prefix: ``Auto``).
     (https://developers.google.com/protocol-buffers/).
 
 
+**MacroBlockBegin** (``std::string``)
+  A regular expression matching macros that start a block.
+
+**MacroBlockEnd** (``std::string``)
+  A regular expression matching macros that end a block.
+
 **MaxEmptyLinesToKeep** (``unsigned``)
   The maximum number of consecutive empty lines to keep.
 
@@ -370,6 +418,9 @@ the configuration (without a prefix: ``Auto``).
   * ``NI_All`` (in configuration: ``All``)
     Indent in all namespaces.
 
+
+**ObjCBlockIndentWidth** (``unsigned``)
+  The number of characters to use for indentation of ObjC blocks.
 
 **ObjCSpaceAfterProperty** (``bool``)
   Add a space after ``@property`` in Objective-C, i.e. use

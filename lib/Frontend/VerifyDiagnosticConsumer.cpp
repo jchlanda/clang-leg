@@ -27,14 +27,13 @@ typedef VerifyDiagnosticConsumer::Directive Directive;
 typedef VerifyDiagnosticConsumer::DirectiveList DirectiveList;
 typedef VerifyDiagnosticConsumer::ExpectedData ExpectedData;
 
-VerifyDiagnosticConsumer::VerifyDiagnosticConsumer(DiagnosticsEngine &_Diags)
-  : Diags(_Diags),
-    PrimaryClient(Diags.getClient()), OwnsPrimaryClient(Diags.ownsClient()),
+VerifyDiagnosticConsumer::VerifyDiagnosticConsumer(DiagnosticsEngine &Diags_)
+  : Diags(Diags_),
+    PrimaryClient(Diags.getClient()), PrimaryClientOwner(Diags.takeClient()),
     Buffer(new TextDiagnosticBuffer()), CurrentPreprocessor(nullptr),
     LangOpts(nullptr), SrcManager(nullptr), ActiveSourceFiles(0),
     Status(HasNoDirectives)
 {
-  Diags.takeClient();
   if (Diags.hasSourceManager())
     setSourceManager(Diags.getSourceManager());
 }
@@ -43,10 +42,8 @@ VerifyDiagnosticConsumer::~VerifyDiagnosticConsumer() {
   assert(!ActiveSourceFiles && "Incomplete parsing of source files!");
   assert(!CurrentPreprocessor && "CurrentPreprocessor should be invalid!");
   SrcManager = nullptr;
-  CheckDiagnostics();  
-  Diags.takeClient();
-  if (OwnsPrimaryClient)
-    delete PrimaryClient;
+  CheckDiagnostics();
+  Diags.takeClient().release();
 }
 
 #ifndef NDEBUG
@@ -61,9 +58,9 @@ public:
 
   /// \brief Hook into the preprocessor and update the list of parsed
   /// files when the preprocessor indicates a new file is entered.
-  virtual void FileChanged(SourceLocation Loc, FileChangeReason Reason,
-                           SrcMgr::CharacteristicKind FileType,
-                           FileID PrevFID) {
+  void FileChanged(SourceLocation Loc, FileChangeReason Reason,
+                   SrcMgr::CharacteristicKind FileType,
+                   FileID PrevFID) override {
     Verify.UpdateParsedFileStatus(SM, SM.getFileID(Loc),
                                   VerifyDiagnosticConsumer::IsParsed);
   }
@@ -402,8 +399,9 @@ static bool ParseDirective(StringRef S, ExpectedData *ED, SourceManager &SM,
 
         // Lookup file via Preprocessor, like a #include.
         const DirectoryLookup *CurDir;
-        const FileEntry *FE = PP->LookupFile(Pos, Filename, false, nullptr,
-                                             CurDir, nullptr, nullptr, nullptr);
+        const FileEntry *FE =
+            PP->LookupFile(Pos, Filename, false, nullptr, nullptr, CurDir,
+                           nullptr, nullptr, nullptr);
         if (!FE) {
           Diags.Report(Pos.getLocWithOffset(PH.C-PH.Begin),
                        diag::err_verify_missing_file) << Filename << KindStr;
@@ -693,7 +691,8 @@ static unsigned CheckLists(DiagnosticsEngine &Diags, SourceManager &SourceMgr,
                            const char *Label,
                            DirectiveList &Left,
                            const_diag_iterator d2_begin,
-                           const_diag_iterator d2_end) {
+                           const_diag_iterator d2_end,
+                           bool IgnoreUnexpected) {
   std::vector<Directive *> LeftOnly;
   DiagList Right(d2_begin, d2_end);
 
@@ -729,7 +728,8 @@ static unsigned CheckLists(DiagnosticsEngine &Diags, SourceManager &SourceMgr,
   }
   // Now all that's left in Right are those that were not matched.
   unsigned num = PrintExpected(Diags, SourceMgr, LeftOnly, Label);
-  num += PrintUnexpected(Diags, &SourceMgr, Right.begin(), Right.end(), Label);
+  if (!IgnoreUnexpected)
+    num += PrintUnexpected(Diags, &SourceMgr, Right.begin(), Right.end(), Label);
   return num;
 }
 
@@ -747,21 +747,28 @@ static unsigned CheckResults(DiagnosticsEngine &Diags, SourceManager &SourceMgr,
   //   Seen \ Expected - set seen but not expected
   unsigned NumProblems = 0;
 
+  const DiagnosticLevelMask DiagMask =
+    Diags.getDiagnosticOptions().getVerifyIgnoreUnexpected();
+
   // See if there are error mismatches.
   NumProblems += CheckLists(Diags, SourceMgr, "error", ED.Errors,
-                            Buffer.err_begin(), Buffer.err_end());
+                            Buffer.err_begin(), Buffer.err_end(),
+                            bool(DiagnosticLevelMask::Error & DiagMask));
 
   // See if there are warning mismatches.
   NumProblems += CheckLists(Diags, SourceMgr, "warning", ED.Warnings,
-                            Buffer.warn_begin(), Buffer.warn_end());
+                            Buffer.warn_begin(), Buffer.warn_end(),
+                            bool(DiagnosticLevelMask::Warning & DiagMask));
 
   // See if there are remark mismatches.
   NumProblems += CheckLists(Diags, SourceMgr, "remark", ED.Remarks,
-                            Buffer.remark_begin(), Buffer.remark_end());
+                            Buffer.remark_begin(), Buffer.remark_end(),
+                            bool(DiagnosticLevelMask::Remark & DiagMask));
 
   // See if there are note mismatches.
   NumProblems += CheckLists(Diags, SourceMgr, "note", ED.Notes,
-                            Buffer.note_begin(), Buffer.note_end());
+                            Buffer.note_begin(), Buffer.note_end(),
+                            bool(DiagnosticLevelMask::Note & DiagMask));
 
   return NumProblems;
 }
@@ -801,8 +808,8 @@ void VerifyDiagnosticConsumer::UpdateParsedFileStatus(SourceManager &SM,
 
 void VerifyDiagnosticConsumer::CheckDiagnostics() {
   // Ensure any diagnostics go to the primary client.
-  bool OwnsCurClient = Diags.ownsClient();
-  DiagnosticConsumer *CurClient = Diags.takeClient();
+  DiagnosticConsumer *CurClient = Diags.getClient();
+  std::unique_ptr<DiagnosticConsumer> Owner = Diags.takeClient();
   Diags.setClient(PrimaryClient, false);
 
 #ifndef NDEBUG
@@ -856,16 +863,23 @@ void VerifyDiagnosticConsumer::CheckDiagnostics() {
     // Check that the expected diagnostics occurred.
     NumErrors += CheckResults(Diags, *SrcManager, *Buffer, ED);
   } else {
-    NumErrors += (PrintUnexpected(Diags, nullptr, Buffer->err_begin(),
-                                  Buffer->err_end(), "error") +
-                  PrintUnexpected(Diags, nullptr, Buffer->warn_begin(),
-                                  Buffer->warn_end(), "warn") +
-                  PrintUnexpected(Diags, nullptr, Buffer->note_begin(),
-                                  Buffer->note_end(), "note"));
+    const DiagnosticLevelMask DiagMask =
+        ~Diags.getDiagnosticOptions().getVerifyIgnoreUnexpected();
+    if (bool(DiagnosticLevelMask::Error & DiagMask))
+      NumErrors += PrintUnexpected(Diags, nullptr, Buffer->err_begin(),
+                                   Buffer->err_end(), "error");
+    if (bool(DiagnosticLevelMask::Warning & DiagMask))
+      NumErrors += PrintUnexpected(Diags, nullptr, Buffer->warn_begin(),
+                                   Buffer->warn_end(), "warn");
+    if (bool(DiagnosticLevelMask::Remark & DiagMask))
+      NumErrors += PrintUnexpected(Diags, nullptr, Buffer->remark_begin(),
+                                   Buffer->remark_end(), "remark");
+    if (bool(DiagnosticLevelMask::Note & DiagMask))
+      NumErrors += PrintUnexpected(Diags, nullptr, Buffer->note_begin(),
+                                   Buffer->note_end(), "note");
   }
 
-  Diags.takeClient();
-  Diags.setClient(CurClient, OwnsCurClient);
+  Diags.setClient(CurClient, Owner.release() != nullptr);
 
   // Reset the buffer, we have processed all the diagnostics in it.
   Buffer.reset(new TextDiagnosticBuffer());

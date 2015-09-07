@@ -803,6 +803,13 @@ def VREINTERPRET
 def VFMA : SInst<"vfma", "dddd", "fQf">;
 
 ////////////////////////////////////////////////////////////////////////////////
+// fp16 vector operations
+def SCALAR_HALF_GET_LANE : IOpInst<"vget_lane", "sdi", "h", OP_SCALAR_HALF_GET_LN>;
+def SCALAR_HALF_SET_LANE : IOpInst<"vset_lane", "dsdi", "h", OP_SCALAR_HALF_SET_LN>;
+def SCALAR_HALF_GET_LANEQ : IOpInst<"vget_lane", "sdi", "Qh", OP_SCALAR_HALF_GET_LNQ>;
+def SCALAR_HALF_SET_LANEQ : IOpInst<"vset_lane", "dsdi", "Qh", OP_SCALAR_HALF_SET_LNQ>;
+
+////////////////////////////////////////////////////////////////////////////////
 // AArch64 Intrinsics
 
 let ArchGuard = "defined(__aarch64__)" in {
@@ -1077,7 +1084,7 @@ def VDUP_LANE2: WOpInst<"vdup_laneq", "dji",
                   "csilUcUsUiUlPcPshfdQcQsQiQlQPcQPsQUcQUsQUiQUlQhQfQdPlQPl",
                         OP_DUP_LN>;
 def DUP_N   : WOpInst<"vdup_n", "ds", "dQdPlQPl", OP_DUP>;
-def MOV_N   : WOpInst<"vmov_n", "ds", "dQd", OP_DUP>;
+def MOV_N   : WOpInst<"vmov_n", "ds", "dQdPlQPl", OP_DUP>;
 
 ////////////////////////////////////////////////////////////////////////////////
 def COMBINE : NoTestOpInst<"vcombine", "kdd", "dPl", OP_CONC>;
@@ -1594,10 +1601,4 @@ def SCALAR_SQRDMULH_LANEQ : SOpInst<"vqrdmulh_laneq", "ssji", "SsSi", OP_SCALAR_
 
 def SCALAR_VDUP_LANE : IInst<"vdup_lane", "sdi", "ScSsSiSlSfSdSUcSUsSUiSUlSPcSPs">;
 def SCALAR_VDUP_LANEQ : IInst<"vdup_laneq", "sji", "ScSsSiSlSfSdSUcSUsSUiSUlSPcSPs">;
-
-// FIXME: Rename so it is obvious this only applies to halfs.
-def SCALAR_HALF_GET_LANE : IOpInst<"vget_lane", "sdi", "h", OP_SCALAR_HALF_GET_LN>;
-def SCALAR_HALF_SET_LANE : IOpInst<"vset_lane", "dsdi", "h", OP_SCALAR_HALF_SET_LN>;
-def SCALAR_HALF_GET_LANEQ : IOpInst<"vget_lane", "sdi", "Qh", OP_SCALAR_HALF_GET_LNQ>;
-def SCALAR_HALF_SET_LANEQ : IOpInst<"vset_lane", "dsdi", "Qh", OP_SCALAR_HALF_SET_LNQ>;
 }

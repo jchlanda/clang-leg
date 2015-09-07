@@ -46,6 +46,11 @@ bool CodeGenModule::TryEmitBaseDestructorAsAlias(const CXXDestructorDecl *D) {
 
   const CXXRecordDecl *Class = D->getParent();
 
+  // We are going to instrument this destructor, so give up even if it is
+  // currently empty.
+  if (Class->mayInsertExtraPadding())
+    return true;
+
   // If we need to manipulate a VTT parameter, give up.
   if (Class->getNumVBases()) {
     // Extra Credit:  passing extra parameters is perfectly safe
@@ -119,6 +124,11 @@ bool CodeGenModule::TryEmitDefinitionAsAlias(GlobalDecl AliasDecl,
   if (!llvm::GlobalAlias::isValidLinkage(Linkage))
     return true;
 
+  // Don't create a weak alias for a dllexport'd symbol.
+  if (AliasDecl.getDecl()->hasAttr<DLLExportAttr>() &&
+      llvm::GlobalValue::isWeakForLinker(Linkage))
+    return true;
+
   llvm::GlobalValue::LinkageTypes TargetLinkage =
       getFunctionLinkage(TargetDecl);
 
@@ -157,9 +167,9 @@ bool CodeGenModule::TryEmitDefinitionAsAlias(GlobalDecl AliasDecl,
   }
 
   if (!InEveryTU) {
-    /// If we don't have a definition for the destructor yet, don't
-    /// emit.  We can't emit aliases to declarations; that's just not
-    /// how aliases work.
+    // If we don't have a definition for the destructor yet, don't
+    // emit.  We can't emit aliases to declarations; that's just not
+    // how aliases work.
     if (Ref->isDeclaration())
       return true;
   }
@@ -172,8 +182,8 @@ bool CodeGenModule::TryEmitDefinitionAsAlias(GlobalDecl AliasDecl,
     return true;
 
   // Create the alias with no name.
-  auto *Alias = llvm::GlobalAlias::create(AliasType->getElementType(), 0,
-                                          Linkage, "", Aliasee, &getModule());
+  auto *Alias =
+      llvm::GlobalAlias::create(AliasType, Linkage, "", Aliasee, &getModule());
 
   // Switch any previous uses to the alias.
   if (Entry) {
@@ -208,6 +218,8 @@ llvm::Function *CodeGenModule::codegenCXXStructor(const CXXMethodDecl *MD,
   }
 
   setFunctionLinkage(GD, Fn);
+  setFunctionDLLStorageClass(GD, Fn);
+
   CodeGenFunction(*this).GenerateCode(GD, Fn, FnInfo);
   setFunctionDefinitionAttributes(MD, Fn);
   SetLLVMFunctionAttributesForDefinition(MD, Fn);
@@ -221,8 +233,7 @@ llvm::GlobalValue *CodeGenModule::getAddrOfCXXStructor(
   if (auto *CD = dyn_cast<CXXConstructorDecl>(MD)) {
     GD = GlobalDecl(CD, toCXXCtorType(Type));
   } else {
-    auto *DD = dyn_cast<CXXDestructorDecl>(MD);
-    GD = GlobalDecl(DD, toCXXDtorType(Type));
+    GD = GlobalDecl(cast<CXXDestructorDecl>(MD), toCXXDtorType(Type));
   }
 
   StringRef Name = getMangledName(GD);

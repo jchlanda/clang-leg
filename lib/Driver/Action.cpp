@@ -24,11 +24,14 @@ const char *Action::getClassName(ActionClass AC) {
   switch (AC) {
   case InputClass: return "input";
   case BindArchClass: return "bind-arch";
+  case CudaDeviceClass: return "cuda-device";
+  case CudaHostClass: return "cuda-host";
   case PreprocessJobClass: return "preprocessor";
   case PrecompileJobClass: return "precompiler";
   case AnalyzeJobClass: return "analyzer";
   case MigrateJobClass: return "migrator";
   case CompileJobClass: return "compiler";
+  case BackendJobClass: return "backend";
   case AssembleJobClass: return "assembler";
   case LinkJobClass: return "linker";
   case LipoJobClass: return "lipo";
@@ -51,6 +54,25 @@ void BindArchAction::anchor() {}
 BindArchAction::BindArchAction(std::unique_ptr<Action> Input,
                                const char *_ArchName)
     : Action(BindArchClass, std::move(Input)), ArchName(_ArchName) {}
+
+void CudaDeviceAction::anchor() {}
+
+CudaDeviceAction::CudaDeviceAction(std::unique_ptr<Action> Input,
+                                   const char *ArchName, bool AtTopLevel)
+    : Action(CudaDeviceClass, std::move(Input)), GpuArchName(ArchName),
+      AtTopLevel(AtTopLevel) {}
+
+void CudaHostAction::anchor() {}
+
+CudaHostAction::CudaHostAction(std::unique_ptr<Action> Input,
+                               const ActionList &_DeviceActions)
+    : Action(CudaHostClass, std::move(Input)), DeviceActions(_DeviceActions) {}
+
+CudaHostAction::~CudaHostAction() {
+  for (iterator it = DeviceActions.begin(), ie = DeviceActions.end(); it != ie;
+       ++it)
+    delete *it;
+}
 
 void JobAction::anchor() {}
 
@@ -91,6 +113,12 @@ void CompileJobAction::anchor() {}
 CompileJobAction::CompileJobAction(std::unique_ptr<Action> Input,
                                    types::ID OutputType)
     : JobAction(CompileJobClass, std::move(Input), OutputType) {}
+
+void BackendJobAction::anchor() {}
+
+BackendJobAction::BackendJobAction(std::unique_ptr<Action> Input,
+                                   types::ID OutputType)
+    : JobAction(BackendJobClass, std::move(Input), OutputType) {}
 
 void AssembleJobAction::anchor() {}
 

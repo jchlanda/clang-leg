@@ -1247,6 +1247,17 @@ class Cursor(Structure):
         return self._extent
 
     @property
+    def storage_class(self):
+        """
+        Retrieves the storage class (if any) of the entity pointed at by the
+        cursor.
+        """
+        if not hasattr(self, '_storage_class'):
+            self._storage_class = conf.lib.clang_Cursor_getStorageClass(self)
+
+        return StorageClass.from_id(self._storage_class)
+
+    @property
     def access_specifier(self):
         """
         Retrieves the access specifier (if any) of the entity pointed at by the
@@ -1465,6 +1476,18 @@ class Cursor(Structure):
         """
         return TokenGroup.get_tokens(self._tu, self.extent)
 
+    def get_field_offsetof(self):
+        """Returns the offsetof the FIELD_DECL pointed by this Cursor."""
+        return conf.lib.clang_Cursor_getOffsetOfField(self)
+
+    def is_anonymous(self):
+        """
+        Check if the record is anonymous.
+        """
+        if self.kind == CursorKind.FIELD_DECL:
+            return self.type.get_declaration().is_anonymous()
+        return conf.lib.clang_Cursor_isAnonymous(self)
+
     def is_bitfield(self):
         """
         Check if the field is a bitfield.
@@ -1509,6 +1532,56 @@ class Cursor(Structure):
 
         res._tu = args[0]._tu
         return res
+
+class StorageClass(object):
+    """
+    Describes the storage class of a declaration
+    """
+
+    # The unique kind objects, index by id.
+    _kinds = []
+    _name_map = None
+
+    def __init__(self, value):
+        if value >= len(StorageClass._kinds):
+            StorageClass._kinds += [None] * (value - len(StorageClass._kinds) + 1)
+        if StorageClass._kinds[value] is not None:
+            raise ValueError,'StorageClass already loaded'
+        self.value = value
+        StorageClass._kinds[value] = self
+        StorageClass._name_map = None
+
+    def from_param(self):
+        return self.value
+
+    @property
+    def name(self):
+        """Get the enumeration name of this storage class."""
+        if self._name_map is None:
+            self._name_map = {}
+            for key,value in StorageClass.__dict__.items():
+                if isinstance(value,StorageClass):
+                    self._name_map[value] = key
+        return self._name_map[self]
+
+    @staticmethod
+    def from_id(id):
+        if id >= len(StorageClass._kinds) or not StorageClass._kinds[id]:
+            raise ValueError,'Unknown storage class %d' % id
+        return StorageClass._kinds[id]
+
+    def __repr__(self):
+        return 'StorageClass.%s' % (self.name,)
+
+StorageClass.INVALID = StorageClass(0)
+StorageClass.NONE = StorageClass(1)
+StorageClass.EXTERN = StorageClass(2)
+StorageClass.STATIC = StorageClass(3)
+StorageClass.PRIVATEEXTERN = StorageClass(4)
+StorageClass.OPENCLWORKGROUPLOCAL = StorageClass(5)
+StorageClass.AUTO = StorageClass(6)
+StorageClass.REGISTER = StorageClass(7)
+
 
 ### C++ access specifiers ###
 
@@ -1822,6 +1895,21 @@ class Type(Structure):
         """
         return RefQualifierKind.from_id(
                 conf.lib.clang_Type_getCXXRefQualifier(self))
+
+    def get_fields(self):
+        """Return an iterator for accessing the fields of this type."""
+
+        def visitor(field, children):
+            assert field != conf.lib.clang_getNullCursor()
+
+            # Create reference to TU so it isn't GC'd before Cursor.
+            field._tu = self._tu
+            fields.append(field)
+            return 1 # continue
+        fields = []
+        conf.lib.clang_Type_visitFields(self,
+                            callbacks['fields_visit'](visitor), fields)
+        return iter(fields)
 
     @property
     def spelling(self):
@@ -2719,6 +2807,7 @@ class Token(Structure):
 callbacks['translation_unit_includes'] = CFUNCTYPE(None, c_object_p,
         POINTER(SourceLocation), c_uint, py_object)
 callbacks['cursor_visit'] = CFUNCTYPE(c_int, Cursor, Cursor, py_object)
+callbacks['fields_visit'] = CFUNCTYPE(c_int, Cursor, py_object)
 
 # Functions strictly alphabetical order.
 functionList = [
@@ -3306,6 +3395,10 @@ functionList = [
    [Cursor, c_uint],
    c_ulonglong),
 
+  ("clang_Cursor_isAnonymous",
+   [Cursor],
+   bool),
+
   ("clang_Cursor_isBitField",
    [Cursor],
    bool),
@@ -3319,6 +3412,10 @@ functionList = [
    [Cursor],
    _CXString,
    _CXString.from_result),
+
+  ("clang_Cursor_getOffsetOfField",
+   [Cursor],
+   c_longlong),
 
   ("clang_Type_getAlignOf",
    [Type],
@@ -3339,6 +3436,10 @@ functionList = [
 
   ("clang_Type_getCXXRefQualifier",
    [Type],
+   c_uint),
+
+  ("clang_Type_visitFields",
+   [Type, callbacks['fields_visit'], py_object],
    c_uint),
 ]
 

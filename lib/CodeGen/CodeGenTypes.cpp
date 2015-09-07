@@ -115,8 +115,9 @@ isSafeToConvert(const RecordDecl *RD, CodeGenTypes &CGT,
                 llvm::SmallPtrSet<const RecordDecl*, 16> &AlreadyChecked) {
   // If we have already checked this type (maybe the same type is used by-value
   // multiple times in multiple structure fields, don't check again.
-  if (!AlreadyChecked.insert(RD)) return true;
-  
+  if (!AlreadyChecked.insert(RD).second)
+    return true;
+
   const Type *Key = CGT.getContext().getTagDeclType(RD).getTypePtr();
   
   // If this type is already laid out, converting it is a noop.
@@ -153,14 +154,16 @@ isSafeToConvert(const RecordDecl *RD, CodeGenTypes &CGT,
 static bool
 isSafeToConvert(QualType T, CodeGenTypes &CGT,
                 llvm::SmallPtrSet<const RecordDecl*, 16> &AlreadyChecked) {
-  T = T.getCanonicalType();
-  
+  // Strip off atomic type sugar.
+  if (const auto *AT = T->getAs<AtomicType>())
+    T = AT->getValueType();
+
   // If this is a record, check it.
-  if (const RecordType *RT = dyn_cast<RecordType>(T))
+  if (const auto *RT = T->getAs<RecordType>())
     return isSafeToConvert(RT->getDecl(), CGT, AlreadyChecked);
-  
+
   // If this is an array, check the elements, which are embedded inline.
-  if (const ArrayType *AT = dyn_cast<ArrayType>(T))
+  if (const auto *AT = CGT.getContext().getAsArrayType(T))
     return isSafeToConvert(AT->getElementType(), CGT, AlreadyChecked);
 
   // Otherwise, there is no concern about transforming this.  We only care about
@@ -405,7 +408,7 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     llvm_unreachable("Unexpected undeduced auto type!");
   case Type::Complex: {
     llvm::Type *EltTy = ConvertType(cast<ComplexType>(Ty)->getElementType());
-    ResultType = llvm::StructType::get(EltTy, EltTy, NULL);
+    ResultType = llvm::StructType::get(EltTy, EltTy, nullptr);
     break;
   }
   case Type::LValueReference:
@@ -500,7 +503,7 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
     // While we're converting the parameter types for a function, we don't want
     // to recursively convert any pointed-to structs.  Converting directly-used
     // structs is ok though.
-    if (!RecordsBeingLaidOut.insert(Ty)) {
+    if (!RecordsBeingLaidOut.insert(Ty).second) {
       ResultType = llvm::StructType::get(getLLVMContext());
       
       SkippedLayout = true;
@@ -656,7 +659,8 @@ llvm::StructType *CodeGenTypes::ConvertRecordDeclType(const RecordDecl *RD) {
   }
 
   // Okay, this is a definition of a type.  Compile the implementation now.
-  bool InsertResult = RecordsBeingLaidOut.insert(Key); (void)InsertResult;
+  bool InsertResult = RecordsBeingLaidOut.insert(Key).second;
+  (void)InsertResult;
   assert(InsertResult && "Recursively compiling a struct?");
   
   // Force conversion of non-virtual base classes recursively.
@@ -713,9 +717,16 @@ bool CodeGenTypes::isZeroInitializable(QualType T) {
   // No need to check for member pointers when not compiling C++.
   if (!Context.getLangOpts().CPlusPlus)
     return true;
-  
-  T = Context.getBaseElementType(T);
-  
+
+  if (const auto *AT = Context.getAsArrayType(T)) {
+    if (isa<IncompleteArrayType>(AT))
+      return true;
+    if (const auto *CAT = dyn_cast<ConstantArrayType>(AT))
+      if (Context.getConstantArrayElementCount(CAT) == 0)
+        return true;
+    T = Context.getBaseElementType(T);
+  }
+
   // Records are non-zero-initializable if they contain any
   // non-zero-initializable subobjects.
   if (const RecordType *RT = T->getAs<RecordType>()) {
@@ -731,6 +742,6 @@ bool CodeGenTypes::isZeroInitializable(QualType T) {
   return true;
 }
 
-bool CodeGenTypes::isZeroInitializable(const CXXRecordDecl *RD) {
+bool CodeGenTypes::isZeroInitializable(const RecordDecl *RD) {
   return getCGRecordLayout(RD).isZeroInitializable();
 }

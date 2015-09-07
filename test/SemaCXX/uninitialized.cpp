@@ -86,7 +86,6 @@ void test_stuff () {
   int aa = (ref(aa) += 10); // expected-warning {{variable 'aa' is uninitialized when used within its own initialization}}
   int bb = bb ? x : y; // expected-warning {{variable 'bb' is uninitialized when used within its own initialization}}
 
-
   for (;;) {
     int a = a; // no-warning: used to signal intended lack of initialization.
     int b = b + 1; // expected-warning {{variable 'b' is uninitialized when used within its own initialization}}
@@ -122,6 +121,50 @@ void test_stuff () {
     int bb = bb ? x : y; // expected-warning {{variable 'bb' is uninitialized when used within its own initialization}}
 
   }
+}
+
+void test_comma() {
+  int a;  // expected-note {{initialize the variable 'a' to silence this warning}}
+  int b = (a, a ?: 2);  // expected-warning {{variable 'a' is uninitialized when used here}}
+  int c = (a, a, b, c);  // expected-warning {{variable 'c' is uninitialized when used within its own initialization}}
+  int d;  // expected-note {{initialize the variable 'd' to silence this warning}}
+  int e = (foo(d), e, b); // expected-warning {{variable 'd' is uninitialized when used here}}
+  int f;  // expected-note {{initialize the variable 'f' to silence this warning}}
+  f = f + 1, 2;  // expected-warning {{variable 'f' is uninitialized when used here}}
+  int h;
+  int g = (h, g, 2);  // no-warning: h, g are evaluated but not used.
+}
+
+namespace member_ptr {
+struct A {
+  int x;
+  int y;
+  A(int x) : x{x} {}
+};
+
+void test_member_ptr() {
+  int A::* px = &A::x;
+  A a{a.*px}; // expected-warning {{variable 'a' is uninitialized when used within its own initialization}}
+  A b = b; // expected-warning {{variable 'b' is uninitialized when used within its own initialization}}
+}
+}
+
+namespace const_ptr {
+void foo(int *a);
+void bar(const int *a);
+void foobar(const int **a);
+
+void test_const_ptr() {
+  int a;
+  int b;  // expected-note {{initialize the variable 'b' to silence this warning}}
+  foo(&a);
+  bar(&b);
+  b = a + b; // expected-warning {{variable 'b' is uninitialized when used here}}
+  int *ptr;  //expected-note {{initialize the variable 'ptr' to silence this warning}}
+  const int *ptr2;
+  foo(ptr); // expected-warning {{variable 'ptr' is uninitialized when used here}}
+  foobar(&ptr2);
+}
 }
 
 // Also test similar constructs in a field's initializer.
@@ -173,7 +216,7 @@ class A {
     static int count;
     int get() const { return num; }
     int get2() { return num; }
-    void set(int x) { num = x; }
+    int set(int x) { num = x; return num; }
     static int zero() { return 0; }
 
     A() {}
@@ -183,7 +226,11 @@ class A {
     A(A *a) {}
     A(A &&a) {}
     ~A();
+    bool operator!();
+    bool operator!=(const A&);
 };
+
+bool operator!=(int, const A&);
 
 A getA() { return A(); }
 A getA(int x) { return A(); }
@@ -243,6 +290,17 @@ void setupA(bool x) {
   A a38({a38});  // expected-warning {{variable 'a38' is uninitialized when used within its own initialization}}
   A a39 = {a39};  // expected-warning {{variable 'a39' is uninitialized when used within its own initialization}}
   A a40 = A({a40});  // expected-warning {{variable 'a40' is uninitialized when used within its own initialization}}
+
+  A a41 = !a41;  // expected-warning {{variable 'a41' is uninitialized when used within its own initialization}}
+  A a42 = !(a42);  // expected-warning {{variable 'a42' is uninitialized when used within its own initialization}}
+  A a43 = a43 != a42;  // expected-warning {{variable 'a43' is uninitialized when used within its own initialization}}
+  A a44 = a43 != a44;  // expected-warning {{variable 'a44' is uninitialized when used within its own initialization}}
+  A a45 = a45 != a45;  // expected-warning 2{{variable 'a45' is uninitialized when used within its own initialization}}
+  A a46 = 0 != a46;  // expected-warning {{variable 'a46' is uninitialized when used within its own initialization}}
+
+  A a47(a47.set(a47.num));  // expected-warning 2{{variable 'a47' is uninitialized when used within its own initialization}}
+  A a48(a47.set(a48.num));  // expected-warning {{variable 'a48' is uninitialized when used within its own initialization}}
+  A a49(a47.set(a48.num));
 }
 
 bool cond;
@@ -294,6 +352,18 @@ A a37(const_refA(a37));
 A a38({a38});  // expected-warning {{variable 'a38' is uninitialized when used within its own initialization}}
 A a39 = {a39};  // expected-warning {{variable 'a39' is uninitialized when used within its own initialization}}
 A a40 = A({a40});  // expected-warning {{variable 'a40' is uninitialized when used within its own initialization}}
+
+A a41 = !a41;  // expected-warning {{variable 'a41' is uninitialized when used within its own initialization}}
+A a42 = !(a42);  // expected-warning {{variable 'a42' is uninitialized when used within its own initialization}}
+A a43 = a43 != a42;  // expected-warning {{variable 'a43' is uninitialized when used within its own initialization}}
+A a44 = a43 != a44;  // expected-warning {{variable 'a44' is uninitialized when used within its own initialization}}
+A a45 = a45 != a45;  // expected-warning 2{{variable 'a45' is uninitialized when used within its own initialization}}
+
+A a46 = 0 != a46;  // expected-warning {{variable 'a46' is uninitialized when used within its own initialization}}
+
+A a47(a47.set(a47.num));  // expected-warning 2{{variable 'a47' is uninitialized when used within its own initialization}}
+A a48(a47.set(a48.num));  // expected-warning {{variable 'a48' is uninitialized when used within its own initialization}}
+A a49(a47.set(a48.num));
 
 class T {
   A a, a2;
@@ -348,6 +418,18 @@ class T {
   T(bool (*)[38]) : a({a}) {}  // expected-warning {{field 'a' is uninitialized when used here}}
   T(bool (*)[39]) : a{a} {}  // expected-warning {{field 'a' is uninitialized when used here}}
   T(bool (*)[40]) : a({a}) {}  // expected-warning {{field 'a' is uninitialized when used here}}
+
+  T(bool (*)[41]) : a(!a) {}  // expected-warning {{field 'a' is uninitialized when used here}}
+  T(bool (*)[42]) : a(!(a)) {}  // expected-warning {{field 'a' is uninitialized when used here}}
+  T(bool (*)[43]) : a(), a2(a2 != a) {}  // expected-warning {{field 'a2' is uninitialized when used here}}
+  T(bool (*)[44]) : a(), a2(a != a2) {}  // expected-warning {{field 'a2' is uninitialized when used here}}
+  T(bool (*)[45]) : a(a != a) {}  // expected-warning 2{{field 'a' is uninitialized when used here}}
+  T(bool (*)[46]) : a(0 != a) {}  // expected-warning {{field 'a' is uninitialized when used here}}
+
+  T(bool (*)[47]) : a2(a2.set(a2.num)) {}  // expected-warning 2{{field 'a2' is uninitialized when used here}}
+  T(bool (*)[48]) : a2(a.set(a2.num)) {}  // expected-warning {{field 'a2' is uninitialized when used here}}
+  T(bool (*)[49]) : a2(a.set(a.num)) {}
+
 };
 
 struct B {
@@ -1111,4 +1193,247 @@ namespace init_list {
   D d1 = { num, num };
   D d2 = { num, d2.a };
   D d3 = { d3.b, num };  // expected-warning{{uninitialized}}
+
+  // Same as above in member initializer form.
+  struct Awrapper {
+    A a1{1,2};
+    A a2{a2.i1 + 2};  // expected-warning{{uninitialized}}
+    A a3 = {a3.i1 + 2};  // expected-warning{{uninitialized}}
+    A a4 = A{a4.i2 + 2};  // expected-warning{{uninitialized}}
+    Awrapper() {}  // expected-note 3{{in this constructor}}
+    Awrapper(int) :
+      a1{1,2},
+      a2{a2.i1 + 2},  // expected-warning{{uninitialized}}
+      a3{a3.i1 + 2},  // expected-warning{{uninitialized}}
+      a4{a4.i2 + 2}  // expected-warning{{uninitialized}}
+    {}
+  };
+
+  struct Bwrapper {
+    B b1 = { {}, {} };
+    B b2 = { {}, b2.a1 };
+    B b3 = { b3.a1 };  // expected-warning{{uninitialized}}
+    B b4 = { {}, b4.a2} ;  // expected-warning{{uninitialized}}
+    B b5 = { b5.a2 };  // expected-warning{{uninitialized}}
+
+    B b6 = { {b6.a1.i1} };  // expected-warning{{uninitialized}}
+    B b7 = { {0, b7.a1.i1} };
+    B b8 = { {}, {b8.a1.i1} };
+    B b9 = { {}, {0, b9.a1.i1} };
+
+    B b10 = { {b10.a1.i2} };  // expected-warning{{uninitialized}}
+    B b11 = { {0, b11.a1.i2} };  // expected-warning{{uninitialized}}
+    B b12 = { {}, {b12.a1.i2} };
+    B b13 = { {}, {0, b13.a1.i2} };
+
+    B b14 = { {b14.a2.i1} };  // expected-warning{{uninitialized}}
+    B b15 = { {0, b15.a2.i1} };  // expected-warning{{uninitialized}}
+    B b16 = { {}, {b16.a2.i1} };  // expected-warning{{uninitialized}}
+    B b17 = { {}, {0, b17.a2.i1} };
+
+    B b18 = { {b18.a2.i2} };  // expected-warning{{uninitialized}}
+    B b19 = { {0, b19.a2.i2} };  // expected-warning{{uninitialized}}
+    B b20 = { {}, {b20.a2.i2} };  // expected-warning{{uninitialized}}
+    B b21 = { {}, {0, b21.a2.i2} };  // expected-warning{{uninitialized}}
+
+    B b22 = { {b18.a2.i2 + 5} };
+    Bwrapper() {}  // expected-note 13{{in this constructor}}
+    Bwrapper(int) :
+      b1{ {}, {} },
+      b2{ {}, b2.a1 },
+      b3{ b3.a1 },  // expected-warning{{uninitialized}}
+      b4{ {}, b4.a2}, // expected-warning{{uninitialized}}
+      b5{ b5.a2 },  // expected-warning{{uninitialized}}
+
+      b6{ {b6.a1.i1} },  // expected-warning{{uninitialized}}
+      b7{ {0, b7.a1.i1} },
+      b8{ {}, {b8.a1.i1} },
+      b9{ {}, {0, b9.a1.i1} },
+
+      b10{ {b10.a1.i2} },  // expected-warning{{uninitialized}}
+      b11{ {0, b11.a1.i2} },  // expected-warning{{uninitialized}}
+      b12{ {}, {b12.a1.i2} },
+      b13{ {}, {0, b13.a1.i2} },
+
+      b14{ {b14.a2.i1} },  // expected-warning{{uninitialized}}
+      b15{ {0, b15.a2.i1} },  // expected-warning{{uninitialized}}
+      b16{ {}, {b16.a2.i1} },  // expected-warning{{uninitialized}}
+      b17{ {}, {0, b17.a2.i1} },
+
+      b18{ {b18.a2.i2} },  // expected-warning{{uninitialized}}
+      b19{ {0, b19.a2.i2} },  // expected-warning{{uninitialized}}
+      b20{ {}, {b20.a2.i2} },  // expected-warning{{uninitialized}}
+      b21{ {}, {0, b21.a2.i2} },  // expected-warning{{uninitialized}}
+
+      b22{ {b18.a2.i2 + 5} }
+    {}
+  };
+
+  struct Cwrapper {
+    C c1 = { 0, num, 0 };
+    C c2 = { 1, num, c2.b };
+    C c3 = { c3.b, num };  // expected-warning{{uninitialized}}
+    C c4 = { 0, c4.b, 0 };  // expected-warning{{uninitialized}}
+    C c5 = { 0, c5.c, 0 };
+    C c6 = { c6.b, num, 0 };  // expected-warning{{uninitialized}}
+    C c7 = { 0, c7.a, 0 };
+
+    Cwrapper() {} // expected-note 3{{in this constructor}}
+    Cwrapper(int) :
+      c1{ 0, num, 0 },
+      c2{ 1, num, c2.b },
+      c3{ c3.b, num },  // expected-warning{{uninitialized}}
+      c4{ 0, c4.b, 0 },  // expected-warning{{uninitialized}}
+      c5{ 0, c5.c, 0 },
+      c6{ c6.b, num, 0 },  // expected-warning{{uninitialized}}
+      c7{ 0, c7.a, 0 }
+    {}
+  };
+
+  struct Dwrapper {
+    D d1 = { num, num };
+    D d2 = { num, d2.a };
+    D d3 = { d3.b, num }; // expected-warning{{uninitialized}}
+    Dwrapper() {}  // expected-note{{in this constructor}}
+    Dwrapper(int) :
+      d1{ num, num },
+      d2{ num, d2.a },
+      d3{ d3.b, num } // expected-warning{{uninitialized}}
+    {}
+  };
+}
+
+namespace template_class {
+class Foo {
+ public:
+    int *Create() { return nullptr; }
 };
+
+template <typename T>
+class A {
+public:
+  // Don't warn on foo here.
+  A() : ptr(foo->Create()) {}
+
+private:
+  Foo *foo = new Foo;
+  int *ptr;
+};
+
+template <typename T>
+class B {
+public:
+  // foo is uninitialized here, but class B is never instantiated.
+  B() : ptr(foo->Create()) {}
+
+private:
+  Foo *foo;
+  int *ptr;
+};
+
+template <typename T>
+class C {
+public:
+  C() : ptr(foo->Create()) {}
+  // expected-warning@-1 {{field 'foo' is uninitialized when used here}}
+private:
+  Foo *foo;
+  int *ptr;
+};
+
+C<int> c;
+// expected-note@-1 {{in instantiation of member function 'template_class::C<int>::C' requested here}}
+
+}
+
+namespace base_class_access {
+struct A {
+  A();
+  A(int);
+
+  int i;
+  int foo();
+
+  static int bar();
+};
+
+struct B : public A {
+  B(int (*)[1]) : A() {}
+  B(int (*)[2]) : A(bar()) {}
+
+  B(int (*)[3]) : A(i) {}
+  // expected-warning@-1 {{base class 'base_class_access::A' is uninitialized when used here to access 'base_class_access::A::i'}}
+
+  B(int (*)[4]) : A(foo()) {}
+  // expected-warning@-1 {{base_class_access::A' is uninitialized when used here to access 'base_class_access::A::foo'}}
+};
+
+struct C {
+  C(int) {}
+};
+
+struct D : public C, public A {
+  D(int (*)[1]) : C(0) {}
+  D(int (*)[2]) : C(bar()) {}
+
+  D(int (*)[3]) : C(i) {}
+  // expected-warning@-1 {{base class 'base_class_access::A' is uninitialized when used here to access 'base_class_access::A::i'}}
+
+  D(int (*)[4]) : C(foo()) {}
+  // expected-warning@-1 {{base_class_access::A' is uninitialized when used here to access 'base_class_access::A::foo'}}
+};
+
+}
+
+namespace value {
+template <class T> T move(T t);
+template <class T> T notmove(T t);
+}
+namespace lvalueref {
+template <class T> T move(T& t);
+template <class T> T notmove(T& t);
+}
+namespace rvalueref {
+template <class T> T move(T&& t);
+template <class T> T notmove(T&& t);
+}
+
+namespace move_test {
+int a1 = std::move(a1); // expected-warning {{uninitialized}}
+int a2 = value::move(a2); // expected-warning {{uninitialized}}
+int a3 = value::notmove(a3); // expected-warning {{uninitialized}}
+int a4 = lvalueref::move(a4);
+int a5 = lvalueref::notmove(a5);
+int a6 = rvalueref::move(a6);
+int a7 = rvalueref::notmove(a7);
+
+void test() {
+  int a1 = std::move(a1); // expected-warning {{uninitialized}}
+  int a2 = value::move(a2); // expected-warning {{uninitialized}}
+  int a3 = value::notmove(a3); // expected-warning {{uninitialized}}
+  int a4 = lvalueref::move(a4);
+  int a5 = lvalueref::notmove(a5);
+  int a6 = rvalueref::move(a6);
+  int a7 = rvalueref::notmove(a7);
+}
+
+class A {
+  int a;
+  A(int (*) [1]) : a(std::move(a)) {} // expected-warning {{uninitialized}}
+  A(int (*) [2]) : a(value::move(a)) {} // expected-warning {{uninitialized}}
+  A(int (*) [3]) : a(value::notmove(a)) {} // expected-warning {{uninitialized}}
+  A(int (*) [4]) : a(lvalueref::move(a)) {}
+  A(int (*) [5]) : a(lvalueref::notmove(a)) {}
+  A(int (*) [6]) : a(rvalueref::move(a)) {}
+  A(int (*) [7]) : a(rvalueref::notmove(a)) {}
+};
+}
+
+void array_capture(bool b) {
+  const char fname[] = "array_capture";
+  if (b) {
+    int unused; // expected-warning {{unused variable}}
+  } else {
+    [fname]{};
+  }
+}

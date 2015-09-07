@@ -39,14 +39,8 @@ public:
       return make_error_code(llvm::errc::no_such_file_or_directory);
     return I->second;
   }
-  std::error_code openFileForRead(const Twine &Path,
-                                  std::unique_ptr<vfs::File> &Result) override {
-    llvm_unreachable("unimplemented");
-  }
-  std::error_code getBufferForFile(const Twine &Name,
-                                   std::unique_ptr<MemoryBuffer> &Result,
-                                   int64_t FileSize = -1,
-                                   bool RequiresNullTerminator = true) {
+  ErrorOr<std::unique_ptr<vfs::File>>
+  openFileForRead(const Twine &Path) override {
     llvm_unreachable("unimplemented");
   }
 
@@ -527,9 +521,7 @@ class VFSFromYAMLTest : public ::testing::Test {
 public:
   int NumDiagnostics;
 
-  void SetUp() {
-    NumDiagnostics = 0;
-  }
+  void SetUp() override { NumDiagnostics = 0; }
 
   static void CountingDiagHandler(const SMDiagnostic &, void *Context) {
     VFSFromYAMLTest *Test = static_cast<VFSFromYAMLTest *>(Context);

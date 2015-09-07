@@ -106,12 +106,12 @@ class VariantMatcher {
     /// \brief Constructs a variadic typed matcher from \p InnerMatchers.
     /// Will try to convert each inner matcher to the destination type and
     /// return llvm::None if it fails to do so.
-    llvm::Optional<DynTypedMatcher> constructVariadicOperator(
-        ast_matchers::internal::VariadicOperatorFunction Func,
-        ArrayRef<VariantMatcher> InnerMatchers) const;
+    llvm::Optional<DynTypedMatcher>
+    constructVariadicOperator(DynTypedMatcher::VariadicOperator Op,
+                              ArrayRef<VariantMatcher> InnerMatchers) const;
 
   protected:
-    ~MatcherOps() {}
+    ~MatcherOps() = default;
 
   private:
     ast_type_traits::ASTNodeKind NodeKind;
@@ -122,7 +122,7 @@ class VariantMatcher {
   /// It follows a similar interface as VariantMatcher itself.
   class Payload : public RefCountedBaseVPTR {
   public:
-    virtual ~Payload();
+    ~Payload() override;
     virtual llvm::Optional<DynTypedMatcher> getSingleMatcher() const = 0;
     virtual std::string getTypeAsString() const = 0;
     virtual llvm::Optional<DynTypedMatcher>
@@ -147,9 +147,9 @@ public:
   /// \brief Creates a 'variadic' operator matcher.
   ///
   /// It will bind to the appropriate type on getTypedMatcher<T>().
-  static VariantMatcher VariadicOperatorMatcher(
-      ast_matchers::internal::VariadicOperatorFunction Func,
-      std::vector<VariantMatcher> Args);
+  static VariantMatcher
+  VariadicOperatorMatcher(DynTypedMatcher::VariadicOperator Op,
+                          std::vector<VariantMatcher> Args);
 
   /// \brief Makes the matcher the "null" matcher.
   void reset();
@@ -242,7 +242,7 @@ struct VariantMatcher::TypedMatcherOps final : VariantMatcher::MatcherOps {
 ///
 /// Supported types:
 ///  - \c unsigned
-///  - \c std::string
+///  - \c llvm::StringRef
 ///  - \c VariantMatcher (\c DynTypedMatcher / \c Matcher<T>)
 class VariantValue {
 public:
@@ -254,11 +254,11 @@ public:
 
   /// \brief Specific constructors for each supported type.
   VariantValue(unsigned Unsigned);
-  VariantValue(const std::string &String);
+  VariantValue(StringRef String);
   VariantValue(const VariantMatcher &Matchers);
 
   /// \brief Returns true iff this is not an empty value.
-  LLVM_EXPLICIT operator bool() const { return hasValue(); }
+  explicit operator bool() const { return hasValue(); }
   bool hasValue() const { return Type != VT_Nothing; }
 
   /// \brief Unsigned value functions.
@@ -269,7 +269,7 @@ public:
   /// \brief String value functions.
   bool isString() const;
   const std::string &getString() const;
-  void setString(const std::string &String);
+  void setString(StringRef String);
 
   /// \brief Matcher value functions.
   bool isMatcher() const;

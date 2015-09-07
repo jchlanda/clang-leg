@@ -18,7 +18,9 @@
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
+#include "clang/Frontend/ChainedDiagnosticConsumer.h"
 #include "clang/Frontend/CompilerInvocation.h"
+#include "clang/Frontend/SerializedDiagnosticPrinter.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Frontend/Utils.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -41,6 +43,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
@@ -198,105 +201,94 @@ extern int cc1_main(ArrayRef<const char *> Argv, const char *Argv0,
 extern int cc1as_main(ArrayRef<const char *> Argv, const char *Argv0,
                       void *MainAddr);
 
-static void ParseProgName(SmallVectorImpl<const char *> &ArgVector,
-                          std::set<std::string> &SavedStrings,
-                          Driver &TheDriver)
-{
-  // Try to infer frontend type and default target from the program name.
+struct DriverSuffix {
+  const char *Suffix;
+  const char *ModeFlag;
+};
 
-  // suffixes[] contains the list of known driver suffixes.
-  // Suffixes are compared against the program name in order.
-  // If there is a match, the frontend type is updated as necessary (CPP/C++).
-  // If there is no match, a second round is done after stripping the last
-  // hyphen and everything following it. This allows using something like
-  // "clang++-2.9".
-
-  // If there is a match in either the first or second round,
-  // the function tries to identify a target as prefix. E.g.
-  // "x86_64-linux-clang" as interpreted as suffix "clang" with
-  // target prefix "x86_64-linux". If such a target prefix is found,
-  // is gets added via -target as implicit first argument.
-  static const struct {
-    const char *Suffix;
-    const char *ModeFlag;
-  } suffixes [] = {
-    { "clang",     nullptr },
-    { "clang++",   "--driver-mode=g++" },
-    { "clang-c++", "--driver-mode=g++" },
-    { "clang-cc",  nullptr },
-    { "clang-cpp", "--driver-mode=cpp" },
-    { "clang-g++", "--driver-mode=g++" },
-    { "clang-gcc", nullptr },
-    { "clang-cl",  "--driver-mode=cl"  },
-    { "cc",        nullptr },
-    { "cpp",       "--driver-mode=cpp" },
-    { "cl" ,       "--driver-mode=cl"  },
-    { "++",        "--driver-mode=g++" },
+static const DriverSuffix *FindDriverSuffix(StringRef ProgName) {
+  // A list of known driver suffixes. Suffixes are compared against the
+  // program name in order. If there is a match, the frontend type if updated as
+  // necessary by applying the ModeFlag.
+  static const DriverSuffix DriverSuffixes[] = {
+      {"clang", nullptr},
+      {"clang++", "--driver-mode=g++"},
+      {"clang-c++", "--driver-mode=g++"},
+      {"clang-cc", nullptr},
+      {"clang-cpp", "--driver-mode=cpp"},
+      {"clang-g++", "--driver-mode=g++"},
+      {"clang-gcc", nullptr},
+      {"clang-cl", "--driver-mode=cl"},
+      {"cc", nullptr},
+      {"cpp", "--driver-mode=cpp"},
+      {"cl", "--driver-mode=cl"},
+      {"++", "--driver-mode=g++"},
   };
-  std::string ProgName(llvm::sys::path::stem(ArgVector[0]));
-#ifdef LLVM_ON_WIN32
-  // Transform to lowercase for case insensitive file systems.
-  std::transform(ProgName.begin(), ProgName.end(), ProgName.begin(),
-                 toLowercase);
-#endif
-  StringRef ProgNameRef(ProgName);
-  StringRef Prefix;
 
-  for (int Components = 2; Components; --Components) {
-    bool FoundMatch = false;
-    size_t i;
-
-    for (i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
-      if (ProgNameRef.endswith(suffixes[i].Suffix)) {
-        FoundMatch = true;
-        SmallVectorImpl<const char *>::iterator it = ArgVector.begin();
-        if (it != ArgVector.end())
-          ++it;
-        if (suffixes[i].ModeFlag)
-          ArgVector.insert(it, suffixes[i].ModeFlag);
-        break;
-      }
-    }
-
-    if (FoundMatch) {
-      StringRef::size_type LastComponent = ProgNameRef.rfind('-',
-        ProgNameRef.size() - strlen(suffixes[i].Suffix));
-      if (LastComponent != StringRef::npos)
-        Prefix = ProgNameRef.slice(0, LastComponent);
-      break;
-    }
-
-    StringRef::size_type LastComponent = ProgNameRef.rfind('-');
-    if (LastComponent == StringRef::npos)
-      break;
-    ProgNameRef = ProgNameRef.slice(0, LastComponent);
-  }
-
-  if (Prefix.empty())
-    return;
-
-  std::string IgnoredError;
-  if (llvm::TargetRegistry::lookupTarget(Prefix, IgnoredError)) {
-    SmallVectorImpl<const char *>::iterator it = ArgVector.begin();
-    if (it != ArgVector.end())
-      ++it;
-    const char* Strings[] =
-      { GetStableCStr(SavedStrings, std::string("-target")),
-        GetStableCStr(SavedStrings, Prefix) };
-    ArgVector.insert(it, Strings, Strings + llvm::array_lengthof(Strings));
-  }
+  for (size_t i = 0; i < llvm::array_lengthof(DriverSuffixes); ++i)
+    if (ProgName.endswith(DriverSuffixes[i].Suffix))
+      return &DriverSuffixes[i];
+  return nullptr;
 }
 
-namespace {
-  class StringSetSaver : public llvm::cl::StringSaver {
-  public:
-    StringSetSaver(std::set<std::string> &Storage) : Storage(Storage) {}
-    const char *SaveString(const char *Str) override {
-      return GetStableCStr(Storage, Str);
+static void ParseProgName(SmallVectorImpl<const char *> &ArgVector,
+                          std::set<std::string> &SavedStrings) {
+  // Try to infer frontend type and default target from the program name by
+  // comparing it against DriverSuffixes in order.
+
+  // If there is a match, the function tries to identify a target as prefix.
+  // E.g. "x86_64-linux-clang" as interpreted as suffix "clang" with target
+  // prefix "x86_64-linux". If such a target prefix is found, is gets added via
+  // -target as implicit first argument.
+
+  std::string ProgName =llvm::sys::path::stem(ArgVector[0]);
+#ifdef LLVM_ON_WIN32
+  // Transform to lowercase for case insensitive file systems.
+  ProgName = StringRef(ProgName).lower();
+#endif
+
+  StringRef ProgNameRef = ProgName;
+  const DriverSuffix *DS = FindDriverSuffix(ProgNameRef);
+
+  if (!DS) {
+    // Try again after stripping any trailing version number:
+    // clang++3.5 -> clang++
+    ProgNameRef = ProgNameRef.rtrim("0123456789.");
+    DS = FindDriverSuffix(ProgNameRef);
+  }
+
+  if (!DS) {
+    // Try again after stripping trailing -component.
+    // clang++-tot -> clang++
+    ProgNameRef = ProgNameRef.slice(0, ProgNameRef.rfind('-'));
+    DS = FindDriverSuffix(ProgNameRef);
+  }
+
+  if (DS) {
+    if (const char *Flag = DS->ModeFlag) {
+      // Add Flag to the arguments.
+      auto it = ArgVector.begin();
+      if (it != ArgVector.end())
+        ++it;
+      ArgVector.insert(it, Flag);
     }
-  private:
-    std::set<std::string> &Storage;
-  };
+
+    StringRef::size_type LastComponent = ProgNameRef.rfind(
+        '-', ProgNameRef.size() - strlen(DS->Suffix));
+    if (LastComponent == StringRef::npos)
+      return;
+
+    // Infer target from the prefix.
+    StringRef Prefix = ProgNameRef.slice(0, LastComponent);
+    std::string IgnoredError;
+    if (llvm::TargetRegistry::lookupTarget(Prefix, IgnoredError)) {
+      auto it = ArgVector.begin();
+      if (it != ArgVector.end())
+        ++it;
+      const char *arr[] = { "-target", GetStableCStr(SavedStrings, Prefix) };
+      ArgVector.insert(it, std::begin(arr), std::end(arr));
+    }
+  }
 }
 
 static void SetBackdoorDriverOutputsFromEnvVars(Driver &TheDriver) {
@@ -329,16 +321,16 @@ static void FixupDiagPrefixExeName(TextDiagnosticPrinter *DiagClient,
 // This lets us create the DiagnosticsEngine with a properly-filled-out
 // DiagnosticOptions instance.
 static DiagnosticOptions *
-CreateAndPopulateDiagOpts(SmallVectorImpl<const char *> &argv) {
+CreateAndPopulateDiagOpts(ArrayRef<const char *> argv) {
   auto *DiagOpts = new DiagnosticOptions;
   std::unique_ptr<OptTable> Opts(createDriverOptTable());
   unsigned MissingArgIndex, MissingArgCount;
-  std::unique_ptr<InputArgList> Args(Opts->ParseArgs(
-      argv.begin() + 1, argv.end(), MissingArgIndex, MissingArgCount));
+  InputArgList Args =
+      Opts->ParseArgs(argv.slice(1), MissingArgIndex, MissingArgCount);
   // We ignore MissingArgCount and the return value of ParseDiagnosticArgs.
   // Any errors that would be diagnosed here will also be diagnosed later,
   // when the DiagnosticsEngine actually exists.
-  (void) ParseDiagnosticArgs(*DiagOpts, *Args);
+  (void)ParseDiagnosticArgs(*DiagOpts, Args);
   return DiagOpts;
 }
 
@@ -350,12 +342,10 @@ static void SetInstallDir(SmallVectorImpl<const char *> &argv,
   SmallString<128> InstalledPath(argv[0]);
 
   // Do a PATH lookup, if there are no directory components.
-  if (llvm::sys::path::filename(InstalledPath) == InstalledPath) {
-    std::string Tmp = llvm::sys::FindProgramByName(
-      llvm::sys::path::filename(InstalledPath.str()));
-    if (!Tmp.empty())
-      InstalledPath = Tmp;
-  }
+  if (llvm::sys::path::filename(InstalledPath) == InstalledPath)
+    if (llvm::ErrorOr<std::string> Tmp = llvm::sys::findProgramByName(
+            llvm::sys::path::filename(InstalledPath.str())))
+      InstalledPath = *Tmp;
   llvm::sys::fs::make_absolute(InstalledPath);
   InstalledPath = llvm::sys::path::parent_path(InstalledPath);
   if (llvm::sys::fs::exists(InstalledPath.c_str()))
@@ -390,8 +380,8 @@ int main(int argc_, const char **argv_) {
     return 1;
   }
 
-  std::set<std::string> SavedStrings;
-  StringSetSaver Saver(SavedStrings);
+  llvm::BumpPtrAllocator A;
+  llvm::BumpPtrStringSaver Saver(A);
 
   // Determines whether we want nullptr markers in argv to indicate response
   // files end-of-lines. We only use this for the /LINK driver argument.
@@ -425,6 +415,7 @@ int main(int argc_, const char **argv_) {
     }
   }
 
+  std::set<std::string> SavedStrings;
   // Handle CCC_OVERRIDE_OPTIONS, used for editing a command line behind the
   // scenes.
   if (const char *OverrideStr = ::getenv("CCC_OVERRIDE_OPTIONS")) {
@@ -444,13 +435,22 @@ int main(int argc_, const char **argv_) {
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID(new DiagnosticIDs());
 
   DiagnosticsEngine Diags(DiagID, &*DiagOpts, DiagClient);
+
+  if (!DiagOpts->DiagnosticSerializationFile.empty()) {
+    auto SerializedConsumer =
+        clang::serialized_diags::create(DiagOpts->DiagnosticSerializationFile,
+                                        &*DiagOpts, /*MergeChildRecords=*/true);
+    Diags.setClient(new ChainedDiagnosticConsumer(
+        Diags.takeClient(), std::move(SerializedConsumer)));
+  }
+
   ProcessWarningOptions(Diags, *DiagOpts, /*ReportDiags=*/false);
 
   Driver TheDriver(Path, llvm::sys::getDefaultTargetTriple(), Diags);
   SetInstallDir(argv, TheDriver);
 
   llvm::InitializeAllTargets();
-  ParseProgName(argv, SavedStrings, TheDriver);
+  ParseProgName(argv, SavedStrings);
 
   SetBackdoorDriverOutputsFromEnvVars(TheDriver);
 
@@ -463,8 +463,12 @@ int main(int argc_, const char **argv_) {
   // Force a crash to test the diagnostics.
   if (::getenv("FORCE_CLANG_DIAGNOSTICS_CRASH")) {
     Diags.Report(diag::err_drv_force_crash) << "FORCE_CLANG_DIAGNOSTICS_CRASH";
-    const Command *FailingCommand = nullptr;
-    FailingCommands.push_back(std::make_pair(-1, FailingCommand));
+
+    // Pretend that every command failed.
+    FailingCommands.clear();
+    for (const auto &J : C->getJobs())
+      if (const Command *C = dyn_cast<Command>(&J))
+        FailingCommands.push_back(std::make_pair(-1, C));
   }
 
   for (const auto &P : FailingCommands) {
@@ -482,15 +486,17 @@ int main(int argc_, const char **argv_) {
     DiagnoseCrash |= CommandRes == 3;
 #endif
     if (DiagnoseCrash) {
-      TheDriver.generateCompilationDiagnostics(*C, FailingCommand);
+      TheDriver.generateCompilationDiagnostics(*C, *FailingCommand);
       break;
     }
   }
 
+  Diags.getClient()->finish();
+
   // If any timers were active but haven't been destroyed yet, print their
   // results now.  This happens in -disable-free mode.
   llvm::TimerGroup::printAll(llvm::errs());
-  
+
   llvm::llvm_shutdown();
 
 #ifdef LLVM_ON_WIN32
