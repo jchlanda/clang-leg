@@ -6647,6 +6647,22 @@ void MSP430TargetCodeGenInfo::setTargetAttributes(
 }
 
 //===----------------------------------------------------------------------===//
+// LEG ABI Implementation
+//===----------------------------------------------------------------------===//
+namespace {
+class LEGABIInfo : public DefaultABIInfo {
+public:
+  LEGABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
+};
+
+class LEGTargetCodeGenInfo : public TargetCodeGenInfo {
+public:
+  LEGTargetCodeGenInfo(CodeGenTypes &CGT)
+      : TargetCodeGenInfo(new DefaultABIInfo(CGT)) {}
+};
+} // namespace
+
+//===----------------------------------------------------------------------===//
 // MIPS ABI Implementation.  This works for both little-endian and
 // big-endian variants.
 //===----------------------------------------------------------------------===//
@@ -8921,6 +8937,9 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   case llvm::Triple::spir:
   case llvm::Triple::spir64:
     return SetCGInfo(new SPIRTargetCodeGenInfo(Types));
+
+  case llvm::Triple::leg:
+    return SetCGInfo(new LEGTargetCodeGenInfo(Types));
   }
 }
 

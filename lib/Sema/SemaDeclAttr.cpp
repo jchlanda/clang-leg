@@ -5258,7 +5258,7 @@ static void handleARMInterruptAttr(Sema &S, Decl *D,
   D->addAttr(::new (S.Context)
              ARMInterruptAttr(Attr.getLoc(), S.Context, Kind, Index));
 }
-
+ 
 static void handleMSP430InterruptAttr(Sema &S, Decl *D,
                                       const AttributeList &Attr) {
   if (!checkAttributeNumArgs(S, Attr, 1))
